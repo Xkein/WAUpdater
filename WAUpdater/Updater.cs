@@ -39,13 +39,13 @@ namespace WAUpdater
         public Updater() : this(new UpdateMirror("local", Directory.GetCurrentDirectory(), "local"))
         {
         }
-        public Updater(UpdateMirror mirror)
+        public Updater(UpdateMirror mirror, int maxDownloadCount = 8)
         {
             Downloader = new Downloader();
             VersionFile = new VersionFile(VERSION_FILE);
             VersionFileRemote = new VersionFile(VERSION_FILE_REMOTE);
             Mirror = mirror;
-            MaxDownloadCount = 8;
+            MaxDownloadCount = maxDownloadCount;
             Decomposer = new Decomposer(Mirror.FileSizeLimit);
 
             ReadIgnore();
@@ -82,6 +82,11 @@ namespace WAUpdater
             Ignore = ignore;
         }
 
+        public void CalculateVersion()
+        {
+            VersionFile.Calculate(Ignore);
+        }
+
         public bool CheckUpdate(out DiffResult diff)
         {
             if (File.Exists(VERSION_FILE_REMOTE))
@@ -92,7 +97,7 @@ namespace WAUpdater
             DownloadTask task = Downloader.Create(Map(VERSION_FILE), VERSION_FILE_REMOTE);
             Downloader.Start(task);
             task.Wait();
-            VersionFile.Calculate(Ignore);
+            CalculateVersion();
 
             if (task.State == DownloadState.Success)
             {
@@ -189,7 +194,7 @@ namespace WAUpdater
                 };
 
                 List<DownloadTask> tasks = new List<DownloadTask>();
-                List<string> filesToDownload = diff.Addeds.Concat(diff.Changeds).ToList();
+                List<string> filesToDownload = diff.FilesToDownload;
                 foreach (string file in filesToDownload)
                 {
                     if (IsDownloaded(file) == false)
@@ -233,7 +238,7 @@ namespace WAUpdater
 
         public void UpdateFiles(DiffResult diff)
         {
-            List<string> filesToCopy = diff.Addeds.Concat(diff.Changeds).ToList();
+            List<string> filesToCopy = diff.FilesToDownload;
             foreach (string file in filesToCopy)
             {
                 Helpers.PrepareDirectory(file);
@@ -248,6 +253,11 @@ namespace WAUpdater
             foreach (string file in diff.Removeds)
             {
                 File.Delete(file);
+                string dir = Path.GetDirectoryName(file);
+                if(string.IsNullOrEmpty(dir) == false && Directory.GetFiles(dir).Length == 0)
+                {
+                    Directory.Delete(dir);
+                }
             }
 
             Directory.Delete(UPDATE_DIR, true);
@@ -257,6 +267,7 @@ namespace WAUpdater
             }
 
             VersionFile.Calculate(Ignore);
+            VersionFile.VersionNumber = VersionFileRemote.VersionNumber;
             VersionFile.Write();
 
             File.Delete(VERSION_FILE_REMOTE);
