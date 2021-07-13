@@ -10,6 +10,17 @@ using System.Web;
 
 namespace WAUpdater
 {
+    public class StartDownloadTaskEventArgs : EventArgs
+    {
+        public StartDownloadTaskEventArgs(DownloadTask task)
+        {
+            Task = task;
+        }
+
+        public DownloadTask Task { get; }
+    }
+    public delegate void StartDownloadTaskEventHandler(object sender, StartDownloadTaskEventArgs e);
+
     public class Downloader
     {
         public Downloader()
@@ -133,7 +144,11 @@ namespace WAUpdater
         public void Start(DownloadTask task)
         {
             task.Start(TaskFactory.Scheduler);
+            RWLock.EnterWriteLock();
             Tasks.AddLast(task);
+            RWLock.ExitWriteLock();
+
+            OnStartDownloadTask?.Invoke(this, new StartDownloadTaskEventArgs(task));
         }
 
         //public long GetTaskContentLength(DownloadTask task)
@@ -157,7 +172,9 @@ namespace WAUpdater
 
         public void ClearTasks(DownloadState state)
         {
+            RWLock.EnterWriteLock();
             Tasks.RemoveAll(task => task.State == state);
+            RWLock.ExitWriteLock();
         }
         public void ClearFinishedTasks()
         {
@@ -170,7 +187,9 @@ namespace WAUpdater
             task.TokenSource.Cancel();
         }
 
+        public ReaderWriterLockSlim RWLock { get; } = new ReaderWriterLockSlim();
         public LinkedList<DownloadTask> Tasks { get; } = new LinkedList<DownloadTask>();
         public TaskFactory TaskFactory;
+        public event StartDownloadTaskEventHandler OnStartDownloadTask;
     }
 }
