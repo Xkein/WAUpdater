@@ -20,12 +20,15 @@ namespace WAUpdater
         {
             return Addeds.Count + Removeds.Count + Changeds.Count == 0;
         }
+
+        public List<string> FilesToDownload => Addeds.Concat(Changeds).ToList();
     }
     public class VersionFile
     {
         public VersionFile(string name)
         {
             fileName = Path.GetFullPath(name);
+            VersionNumber = "unverified!";
         }
         string GetPath(FileInfo info)
         {
@@ -34,11 +37,15 @@ namespace WAUpdater
         public void Read()
         {
             FileVersionInfos.Clear();
-            XElement file = XElement.Load(fileName);
-            foreach (XElement element in file.Elements())
+            if (File.Exists(fileName))
             {
-                var info = new FileVersionInfo(element);
-                FileVersionInfos.Add(info.Path, info);
+                XElement file = XElement.Load(fileName);
+                VersionNumber = (string)file.Attribute("Number");
+                foreach (XElement element in file.Elements())
+                {
+                    var info = new FileVersionInfo(element);
+                    FileVersionInfos.Add(info.Path, info);
+                }
             }
         }
         bool IsInHiddenDirectory(FileInfo info)
@@ -60,36 +67,50 @@ namespace WAUpdater
         {
             FileVersionInfos.Clear();
             var dir = new DirectoryInfo(WorkDirectory);
+
             List<FileInfo> list = dir.GetFiles("*", SearchOption.AllDirectories).ToList();
+
             list = (from info in list
                     where info.Attributes != FileAttributes.Hidden
                     where IsInHiddenDirectory(info) == false
                     where info.FullName != fileName
                     select info).ToList();
 
-            foreach (FileInfo info in list)
-            {
-                string relPath = GetPath(info);
-                if (ignore.Exists(rex => rex.IsMatch(relPath)) == false)
-                {
-                    var versionInfo = new FileVersionInfo(relPath);
-                    if (decomposer != null && decomposer.NeedDecompose(relPath))
-                    {
-                        versionInfo.IsDecomposed = true;
-                        string[] volumns = decomposer.Decompose(relPath, "Volumns");
-                        versionInfo.Volumns = (from volumn in volumns
-                                               select new FileVersionInfo(volumn, isVolumn: true)
-                                               ).ToList();
-                    }
+            List<string> relPaths = (from info in list select GetPath(info)).ToList();
 
-                    FileVersionInfos.Add(relPath, versionInfo);
+            List<string> toIgnore = new List<string>();
+            foreach (Regex rex in ignore)
+            {
+                foreach (string relPath in relPaths)
+                {
+                    if (rex.IsMatch(relPath))
+                    {
+                        toIgnore.Add(relPath);
+                    }
                 }
+            }
+
+            List<string> toCalc = relPaths.Except(toIgnore).ToList();
+            foreach (string relPath in toCalc)
+            {
+                var versionInfo = new FileVersionInfo(relPath);
+                if (decomposer != null && decomposer.NeedDecompose(relPath))
+                {
+                    versionInfo.IsDecomposed = true;
+                    string[] volumns = decomposer.Decompose(relPath, "Volumns");
+                    versionInfo.Volumns = (from volumn in volumns
+                                           select new FileVersionInfo(volumn, isVolumn: true)
+                                           ).ToList();
+                }
+
+                FileVersionInfos.Add(relPath, versionInfo);
             }
         }
 
         public void Write()
         {
-            var file = new XElement("version");
+            var file = new XElement("Version", new XAttribute("Number", VersionNumber));
+
             foreach (var pair in FileVersionInfos)
             {
                 string path = pair.Key;
@@ -136,6 +157,7 @@ namespace WAUpdater
 
         string fileName;
         string WorkDirectory => Path.GetDirectoryName(fileName);
-        public Dictionary<string, FileVersionInfo> FileVersionInfos { get; set; } = new Dictionary<string, FileVersionInfo>();
+        public Dictionary<string, FileVersionInfo> FileVersionInfos { get; private set; } = new Dictionary<string, FileVersionInfo>();
+        public string VersionNumber { get; set; }
     }
 }
