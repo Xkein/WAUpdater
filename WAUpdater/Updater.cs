@@ -110,7 +110,7 @@ namespace WAUpdater
             return false;
         }
 
-        public Task DownloadFiles(DiffResult diff)
+        public Task DownloadFiles(DiffResult diff, CancellationTokenSource cancellationTokenSource = null)
         {
             return new Task(() =>
             {
@@ -144,18 +144,30 @@ namespace WAUpdater
                             foreach (FileVersionInfo volumn in versionInfo.Volumns)
                             {
                                 DownloadTask volumnTask = Downloader.Create(Map(volumn.Path), GetUpdatePath(volumn.Path));
+                                volumnTask.TokenSource = task.TokenSource;
                                 task.StateChanged += handler;
                                 volumnTask.Length = volumn.Size;
                                 volumnTasks.Add(volumnTask);
                             }
+
+                            CancellationTokenSource tokenSource = task.TokenSource;
 
                             Task downloadTask = new Task(() => {
                                 task.ChangeState(DownloadState.Downloading);
                                 semaphore.Release();
                                 foreach (DownloadTask volumnTask in volumnTasks)
                                 {
-                                    semaphore.WaitOne();
-                                    Downloader.Start(volumnTask);
+                                    // download task canceled, stop starting other new download task.
+                                    if (tokenSource.IsCancellationRequested)
+                                    {
+                                        volumnTask.ChangeState(DownloadState.Canceled);
+                                        break;
+                                    }
+                                    else
+                                    {
+                                        semaphore.WaitOne();
+                                        Downloader.Start(volumnTask);
+                                    }
                                 }
                             });
 
@@ -165,10 +177,15 @@ namespace WAUpdater
                                 DownloadTask[] downloadTasks = volumnTasks.ToArray();
                                 while (Task.WaitAll(downloadTasks, TimeSpan.FromSeconds(1)) == false)
                                 {
+                                    // download task canceled, stop waiting.
+                                    if (tokenSource.IsCancellationRequested)
+                                    {
+                                        break;
+                                    }
                                     task.Current = downloadTasks.Sum(t => t.Current);
                                 }
 
-                                task.ChangeState(task.TokenSource.IsCancellationRequested ? DownloadState.Canceled : DownloadState.Success);
+                                task.ChangeState(tokenSource.IsCancellationRequested ? DownloadState.Canceled : DownloadState.Success);
                                 if(task.State == DownloadState.Success)
                                 {
                                     string fileName = downloadTasks[0].FileName;
@@ -205,8 +222,17 @@ namespace WAUpdater
 
                 foreach (DownloadTask task in tasks)
                 {
-                    semaphore.WaitOne();
-                    Downloader.Start(task);
+                    // download task canceled, stop starting other new download task.
+                    if (cancellationTokenSource.IsCancellationRequested)
+                    {
+                        task.ChangeState(DownloadState.Canceled);
+                        break;
+                    }
+                    else
+                    {
+                        semaphore.WaitOne();
+                        Downloader.Start(task);
+                    }
                 }
 
                 Task wait = Task.WhenAll(tasks);

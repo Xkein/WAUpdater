@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using WAUpdater;
 
@@ -60,6 +61,7 @@ namespace WAUpdate
         const string OLD_UPDATER = "WAUpdate.exe.old";
         static Updater _updater;
         static DiffResult _diff;
+        static CancellationTokenSource _downloadCTS;
 
         private static void ChangeVersionState(VersionState newState)
         {
@@ -132,7 +134,8 @@ namespace WAUpdate
                 {
                     args.Task.ProgressChanged += Task_ProgressChanged;
                 };
-                Task downloadTask = _updater.DownloadFiles(_diff);
+                _downloadCTS = new CancellationTokenSource();
+                Task downloadTask = _updater.DownloadFiles(_diff, _downloadCTS);
                 downloadTask.Start();
 
                 _updater.VersionFile.Write();
@@ -174,13 +177,28 @@ namespace WAUpdate
 
         public static void Cancel()
         {
-            foreach (DownloadTask task in _updater.Downloader.Tasks)
+            _downloadCTS.Cancel();
+            Task.Run(() =>
             {
-                _updater.Downloader.Cancel(task);
-            }
+                while (true)
+                {
+                    _updater.Downloader.RWLock.EnterWriteLock();
+                    foreach (DownloadTask task in _updater.Downloader.Tasks)
+                    {
+                        _updater.Downloader.Cancel(task);
+                    }
+                    _updater.Downloader.RWLock.ExitWriteLock();
 
-            _updater.Downloader.ClearFinishedTasks();
-            ChangeVersionState(VersionState.Outdated);
+                    _updater.Downloader.ClearFinishedTasks();
+                    Thread.Sleep(200);
+                    if (_updater.Downloader.Tasks.Count == 0)
+                    {
+                        break;
+                    }
+                }
+
+                ChangeVersionState(VersionState.Outdated);
+            });
         }
     }
 }
