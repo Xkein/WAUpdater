@@ -15,8 +15,9 @@ namespace Test
         static void Main(string[] args)
         {
             Program.args = args;
+#if DEBUG
             Console.ReadLine();
-            Console.WriteLine("TEST");
+#endif
             switch (args[0])
             {
                 case "-sync":
@@ -47,10 +48,8 @@ namespace Test
             Console.WriteLine("checking update from {0}.", mirror);
             if (updater.CheckUpdate(out DiffResult diff))
             {
-
                 Task displayTask = new Task(() =>
                 {
-                    var tasks = updater.Downloader.Tasks;
                     while (downloadTask == null)
                     {
                         Thread.Sleep(50);
@@ -58,7 +57,8 @@ namespace Test
                     while (downloadTask.Wait(1000) == false)
                     {
                         Console.WriteLine("-----------------------------------");
-                        foreach (DownloadTask task in tasks)
+                        updater.Downloader.RWLock.EnterReadLock();
+                        foreach (DownloadTask task in updater.Downloader.Tasks)
                         {
                             if (task.State == DownloadState.Downloading)
                             {
@@ -72,6 +72,7 @@ namespace Test
                                 }
                             }
                         }
+                        updater.Downloader.RWLock.ExitReadLock();
                         Console.WriteLine("-----------------------------------");
                     }
                 }, TaskCreationOptions.HideScheduler
@@ -91,7 +92,7 @@ namespace Test
 
                 Process process = new Process();
                 process.StartInfo.FileName = OLD_UPDATER;
-                process.StartInfo.UseShellExecute = true;
+                process.StartInfo.UseShellExecute = false;
                 process.StartInfo.Arguments = "-update";
                 process.Start();
             }
