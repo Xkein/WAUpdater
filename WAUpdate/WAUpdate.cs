@@ -21,6 +21,12 @@ namespace WAUpdate
 
     public static class WAUpdateManager
     {
+#if DEBUG
+        static WAUpdateManager()
+        {
+            System.Threading.Thread.Sleep(10000);
+        }
+#endif
         public delegate void DownloadProgressChangedCallback(string currFileName, int currFilePercentage, int totalPercentage);
 
         public static event EventHandler OnBeforeRestart;
@@ -93,7 +99,7 @@ namespace WAUpdate
             ChangeVersionState(VersionState.VersionCheckInProgress);
             if (_updater.CheckUpdate(out _diff))
             {
-                if(_diff.NoDiff())
+                if(_diff.FilesToDownload.Count <= 0)
                 {
                     ChangeVersionState(VersionState.UpToDate);
                 }
@@ -163,7 +169,7 @@ namespace WAUpdate
             _updater.Downloader.RWLock.EnterReadLock();
             long totalDownloadSize = _updater.Downloader.Tasks.Sum(t => t.Current);
             _updater.Downloader.RWLock.ExitReadLock();
-            DownloadProgressChanged?.Invoke(task.FileName, e.ProgressPercentage, (int)(totalDownloadSize / (double)UpdateSize));
+            DownloadProgressChanged?.Invoke(task.FileName, e.ProgressPercentage, (int)(totalDownloadSize / (double)UpdateSize * 100));
         }
 
         public static void Cancel()

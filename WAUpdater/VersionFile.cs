@@ -32,7 +32,7 @@ namespace WAUpdater
         }
         string GetPath(FileInfo info)
         {
-            return info.FullName.Replace(WorkDirectory, "").Substring(1);
+            return info.FullName.Replace(BaseDirectory, "").Substring(1);
         }
         public void Read()
         {
@@ -51,7 +51,7 @@ namespace WAUpdater
         bool IsInHiddenDirectory(FileInfo info)
         {
             string dir = info.FullName;
-            while(dir != string.Empty && dir != WorkDirectory)
+            while(dir != string.Empty && dir != BaseDirectory)
             {
                 dir = Path.GetDirectoryName(dir);
                 var dirInfo = new DirectoryInfo(dir);
@@ -66,7 +66,7 @@ namespace WAUpdater
         public void Calculate(List<Regex> ignore, Decomposer decomposer = null)
         {
             FileVersionInfos.Clear();
-            var dir = new DirectoryInfo(WorkDirectory);
+            var dir = new DirectoryInfo(BaseDirectory);
 
             List<FileInfo> list = dir.GetFiles("*", SearchOption.AllDirectories).ToList();
 
@@ -156,7 +156,7 @@ namespace WAUpdater
         }
 
         string fileName;
-        string WorkDirectory => Path.GetDirectoryName(fileName);
+        string BaseDirectory => Path.GetDirectoryName(fileName);
         public Dictionary<string, FileVersionInfo> FileVersionInfos { get; private set; } = new Dictionary<string, FileVersionInfo>();
         public string VersionNumber { get; set; }
     }
