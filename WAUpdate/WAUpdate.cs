@@ -57,6 +57,63 @@ namespace WAUpdate
                 return infos.Sum(info => info.Size);
             }
         }
+        public static int UpdateFileCount
+        {
+            get
+            {
+                if (_updater == null)
+                {
+                    return -1;
+                }
+
+                return _diff.FilesToDownload.Count;
+            }
+        }
+        public static long TotalDownloadedSize
+        {
+            get
+            {
+                if (_updater == null)
+                {
+                    return -1;
+                }
+
+                _updater.Downloader.RWLock.EnterReadLock();
+                long totalDownloadedSize = _updater.Downloader.Tasks.Sum(t => t.Current);
+                _updater.Downloader.RWLock.ExitReadLock();
+                return totalDownloadedSize;
+            }
+        }
+        public static int DownloadingTaskCount
+        {
+            get
+            {
+                if (_updater == null)
+                {
+                    return -1;
+                }
+
+                _updater.Downloader.RWLock.EnterReadLock();
+                int count = _updater.Downloader.Tasks.Count(t => t.State == DownloadState.Downloading || t.State == DownloadState.Fetching);
+                _updater.Downloader.RWLock.ExitReadLock();
+                return count;
+            }
+        }
+        public static int FinishedTaskCount
+        {
+            get
+            {
+                if (_updater == null)
+                {
+                    return -1;
+                }
+
+                _updater.Downloader.RWLock.EnterReadLock();
+                int count = _updater.Downloader.Tasks.Count(t => t.State == DownloadState.Success);
+                _updater.Downloader.RWLock.ExitReadLock();
+                return count;
+            }
+        }
 
         const string OLD_UPDATER = "WAUpdate.exe.old";
         static Updater _updater;
@@ -169,10 +226,7 @@ namespace WAUpdate
         private static void Task_ProgressChanged(object sender, DownloadProgressChangedEventArgs e)
         {
             var task = sender as DownloadTask;
-            _updater.Downloader.RWLock.EnterReadLock();
-            long totalDownloadSize = _updater.Downloader.Tasks.Sum(t => t.Current);
-            _updater.Downloader.RWLock.ExitReadLock();
-            DownloadProgressChanged?.Invoke(task.FileName, e.ProgressPercentage, (int)(totalDownloadSize / (double)UpdateSize * 100));
+            DownloadProgressChanged?.Invoke(task.FileName, e.ProgressPercentage, (int)(TotalDownloadedSize / (double)UpdateSize * 100));
         }
 
         public static void Cancel()

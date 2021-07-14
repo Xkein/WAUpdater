@@ -14,23 +14,43 @@ namespace Test
     {
         static void Main(string[] args)
         {
-            Program.args = args;
-#if DEBUG
-            Console.ReadLine();
-#endif
-            switch (args[0])
+            try
             {
-                case "-sync":
-                    Sync();
-                    break;
-                case "-update":
-                    Update();
-                    break;
-                case "-calc":
-                    Calc();
-                    break;
+                Program.args = args;
+#if DEBUG
+                Console.ReadLine();
+#endif
+                switch (args[0])
+                {
+                    case "-sync":
+                        Sync();
+                        break;
+                    case "-update":
+                        Update();
+                        break;
+                    case "-calc":
+                        Calc();
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowException(ex);
             }
         }
+
+        private static void ShowException(Exception ex)
+        {
+            System.Windows.Forms.MessageBox.Show(
+                                $"Message: {ex.Message}{Environment.NewLine}" +
+                                $"Source: {ex.Source}{Environment.NewLine}" +
+                                $"TargetSite.Name: {ex.TargetSite?.Name}{Environment.NewLine}" +
+                                $"Stacktrace: {ex.StackTrace}",
+                                "Error!",
+                                System.Windows.Forms.MessageBoxButtons.OK,
+                                System.Windows.Forms.MessageBoxIcon.Error);
+        }
+
         static string[] args;
         static volatile Task downloadTask = null;
         static void Sync()
