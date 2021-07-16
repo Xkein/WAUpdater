@@ -20,6 +20,16 @@ namespace WAUpdater
         public DownloadTask Task { get; }
     }
     public delegate void StartDownloadTaskEventHandler(object sender, StartDownloadTaskEventArgs e);
+    public class DownloadTaskFailEventArgs : EventArgs
+    {
+        public DownloadTaskFailEventArgs(DownloadTask task)
+        {
+            Task = task;
+        }
+
+        public DownloadTask Task { get; }
+    }
+    public delegate void DownloadTaskFailEventHandler(object sender, DownloadTaskFailEventArgs e);
 
     public class Downloader
     {
@@ -40,7 +50,19 @@ namespace WAUpdater
                 {
                     downloadeTask.ChangeState(DownloadState.Fetching);
 
+                    //GC.Collect();
                     request = WebRequest.Create(downloadeTask.Uri);
+                    if (request is HttpWebRequest)
+                    {
+                        var httpRequest = request as HttpWebRequest;
+                        // start from old position.
+                        httpRequest.AddRange(stream.Length);
+                        stream.Seek(stream.Length, SeekOrigin.Begin);
+                        downloadeTask.Current = stream.Length;
+
+                        httpRequest.ReadWriteTimeout = 30 * 1000;
+                        httpRequest.Timeout = 30 * 1000;
+                    }
                     response = request.GetResponse();
                     if (downloadeTask.Length == 0)
                     {
@@ -49,33 +71,36 @@ namespace WAUpdater
 
                     downloadeTask.ChangeState(DownloadState.Downloading);
 
-                    byte[] buffer = new byte[1024 * 50];
-                    Stream responseStream = response.GetResponseStream();
-
-                    CancellationTokenSource tokenSource = downloadeTask.TokenSource;
-                    int i;
-                    while (tokenSource.IsCancellationRequested == false)
+                    byte[] buffer = new byte[1024 * 80];
+                    using (Stream responseStream = response.GetResponseStream())
                     {
-                        i = responseStream.Read(buffer, 0, buffer.Length);
-                        if (i <= 0)
+                        CancellationTokenSource tokenSource = downloadeTask.TokenSource;
+                        int i;
+                        while (tokenSource.IsCancellationRequested == false)
                         {
-                            break;
+                            i = responseStream.Read(buffer, 0, buffer.Length);
+                            if (i <= 0)
+                            {
+                                break;
+                            }
+                            downloadeTask.Current += i;
+                            stream.Write(buffer, 0, i);
+                            stream.Flush();
                         }
-                        downloadeTask.Current += i;
-                        stream.Write(buffer, 0, i);
-                    }
 
-                    if (tokenSource.IsCancellationRequested)
-                    {
-                        downloadeTask.ChangeState(DownloadState.Canceled);
-                    }
-                    else
-                    {
-                        downloadeTask.ChangeState(DownloadState.Success);
+                        if (tokenSource.IsCancellationRequested)
+                        {
+                            downloadeTask.ChangeState(DownloadState.Canceled);
+                        }
+                        else
+                        {
+                            downloadeTask.ChangeState(DownloadState.Success);
+                        }
                     }
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
+                    downloadeTask.CurrentException = ex;
                     downloadeTask.ChangeState(DownloadState.Fail);
                     throw;
                 }
@@ -87,8 +112,10 @@ namespace WAUpdater
             }, new CancellationTokenSource());
             downloadeTask.CreateTime = DateTime.Now;
             downloadeTask.Uri = uri;
+            downloadeTask.StateChanged += DownloadeTask_StateChanged;
             return downloadeTask;
         }
+
         public DownloadTask Create(Uri uri, string fileName)
         {
             DownloadTask downloadeTask = null;
@@ -96,15 +123,17 @@ namespace WAUpdater
             {
                 Helpers.PrepareDirectory(downloadeTask.FileName);
 
-                FileStream fs = new FileStream(downloadeTask.FileName + downloadeTask.TmpExtension, FileMode.Create, FileAccess.Write);
+                FileStream fs = new FileStream(downloadeTask.FileName + downloadeTask.TmpExtension, FileMode.OpenOrCreate, FileAccess.Write);
                 DownloadTask realTask = Create(uri, fs);
                 realTask.TokenSource = downloadeTask.TokenSource;
+                realTask.StateChanged -= DownloadeTask_StateChanged;
                 realTask.StateChanged += (sender, args) =>
                 {
                     if(args.State == DownloadState.Downloading && downloadeTask.Length == 0)
                     {
                         downloadeTask.Length = realTask.Length;
                     }
+                    downloadeTask.CurrentException = realTask.CurrentException;
                     downloadeTask.ChangeState(args.State);
                 };
                 realTask.ProgressChanged += (sender, args) =>
@@ -116,8 +145,9 @@ namespace WAUpdater
                 {
                     realTask.RunSynchronously();
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
+                    downloadeTask.CurrentException = ex;
                     downloadeTask.ChangeState(DownloadState.Fail);
                     throw;
                 }
@@ -138,6 +168,7 @@ namespace WAUpdater
             downloadeTask.CreateTime = DateTime.Now;
             downloadeTask.Uri = uri;
             downloadeTask.FileName = fileName;
+            downloadeTask.StateChanged += DownloadeTask_StateChanged;
             return downloadeTask;
         }
 
@@ -147,8 +178,6 @@ namespace WAUpdater
             RWLock.EnterWriteLock();
             Tasks.AddLast(task);
             RWLock.ExitWriteLock();
-
-            OnStartDownloadTask?.Invoke(this, new StartDownloadTaskEventArgs(task));
         }
 
         //public long GetTaskContentLength(DownloadTask task)
@@ -187,9 +216,26 @@ namespace WAUpdater
             task.TokenSource.Cancel();
         }
 
+        private void DownloadeTask_StateChanged(object sender, DownloadStateChangedEventArgs args)
+        {
+            var task = sender as DownloadTask;
+            switch (args.State)
+            {
+                case DownloadState.Fetching:
+                    OnStartDownloadTask?.Invoke(this, new StartDownloadTaskEventArgs(task));
+                    break;
+                case DownloadState.Fail:
+                    OnDownloadTaskFail?.Invoke(this, new DownloadTaskFailEventArgs(task));
+                    break;
+                default:
+                    break;
+            }
+        }
+
         public ReaderWriterLockSlim RWLock { get; } = new ReaderWriterLockSlim();
         public LinkedList<DownloadTask> Tasks { get; } = new LinkedList<DownloadTask>();
         public TaskFactory TaskFactory;
         public event StartDownloadTaskEventHandler OnStartDownloadTask;
+        public event DownloadTaskFailEventHandler OnDownloadTaskFail;
     }
 }

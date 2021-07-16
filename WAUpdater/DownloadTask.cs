@@ -24,7 +24,7 @@ namespace WAUpdater
     }
     public class DownloadProgressChangedEventArgs : System.ComponentModel.ProgressChangedEventArgs
     {
-        internal DownloadProgressChangedEventArgs(long bytesReceived, long totalBytesToReceive, object userState = null) : base((totalBytesToReceive == -1L) ? 0 : ((int)(bytesReceived * 100L / totalBytesToReceive)), userState)
+        internal DownloadProgressChangedEventArgs(long bytesReceived, long totalBytesToReceive, object userState = null) : base((totalBytesToReceive <= 0L) ? 0 : ((int)(bytesReceived * 100L / totalBytesToReceive)), userState)
         {
             BytesReceived = bytesReceived;
             TotalBytesToReceive = totalBytesToReceive;
@@ -56,7 +56,7 @@ namespace WAUpdater
             get => current;
             internal set
             {
-                if(current != value)
+                if (current != value)
                 {
                     current = value;
                     ProgressChanged?.Invoke(this, new DownloadProgressChangedEventArgs(current, Length));
@@ -70,6 +70,7 @@ namespace WAUpdater
         public Uri Uri { get; internal set; }
         public string FileName { get; internal set; }
         public string TmpExtension { get; set; } = ".tmp";
+        public Exception CurrentException { get; internal set; }
 
         public event DownloadStateChangedEventHandler StateChanged;
         public event DownloadProgressChangedEventHandler ProgressChanged;

@@ -34,6 +34,7 @@ namespace WAUpdate
         public static Action<Exception> OnUpdateFailed;
         public static Action OnVersionStateChanged;
         public static DownloadProgressChangedCallback DownloadProgressChanged;
+        public static Action<string, Exception> OnDownloadFailed;
 
         public static List<UpdateMirror> Mirrors { get; internal set; }
 
@@ -110,8 +111,29 @@ namespace WAUpdate
 
                 _updater.Downloader.RWLock.EnterReadLock();
                 int count = _updater.Downloader.Tasks.Count(t => t.State == DownloadState.Success);
+                count += _diff.FilesToDownload.Count(file => File.Exists(Path.Combine("Update", file)) && _updater.Downloader.Tasks.Select(t => t.FileName).Contains(file) == false);
                 _updater.Downloader.RWLock.ExitReadLock();
                 return count;
+            }
+        }
+
+        public static int DownloadThreadCount
+        {
+            get
+            {
+                if (_updater == null)
+                {
+                    return -1;
+                }
+
+                return _updater.MaxDownloadCount;
+            }
+            set
+            {
+                if(_updater != null)
+                {
+                    _updater.MaxDownloadCount = value;
+                }
             }
         }
 
@@ -174,9 +196,9 @@ namespace WAUpdate
             }
         }
 
-        public static void CheckVersionAsync()
+        public static Task CheckVersionAsync()
         {
-            Task.Run(() =>
+            return Task.Run(() =>
             {
                 CheckVersion();
             });
@@ -191,22 +213,30 @@ namespace WAUpdate
                 {
                     args.Task.ProgressChanged += Task_ProgressChanged;
                 };
+                _updater.Downloader.OnDownloadTaskFail += (sender, args) =>
+                {
+                    DownloadTask task = args.Task;
+                    OnDownloadFailed?.Invoke(task.FileName, task.CurrentException);
+                };
                 _downloadCTS = new CancellationTokenSource();
                 Task downloadTask = _updater.DownloadFiles(_diff, _downloadCTS);
                 downloadTask.Start();
-
-                _updater.VersionFile.Write();
                 downloadTask.Wait();
 
-                OnBeforeRestart?.Invoke(null, EventArgs.Empty);
+                // no task cancelled and cleared.
+                if (_downloadCTS.IsCancellationRequested == false)
+                {
+                    _updater.VersionFile.Write();
+                    OnBeforeRestart?.Invoke(null, EventArgs.Empty);
 
-                File.Copy("WAUpdate.exe", OLD_UPDATER, true);
+                    File.Copy("WAUpdate.exe", OLD_UPDATER, true);
 
-                Process process = new Process();
-                process.StartInfo.FileName = OLD_UPDATER;
-                process.StartInfo.UseShellExecute = false;
-                process.StartInfo.Arguments = "-update";
-                process.Start();
+                    Process process = new Process();
+                    process.StartInfo.FileName = OLD_UPDATER;
+                    process.StartInfo.UseShellExecute = false;
+                    process.StartInfo.Arguments = "-update";
+                    process.Start();
+                }
             }
             catch (Exception ex)
             {
@@ -215,9 +245,9 @@ namespace WAUpdate
             }
         }
 
-        public static void FetchUpdateAsync()
+        public static Task FetchUpdateAsync()
         {
-            Task.Run(() =>
+            return Task.Run(() =>
             {
                 FetchUpdate();
             });

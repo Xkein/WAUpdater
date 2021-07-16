@@ -51,6 +51,7 @@
     <Compile Include="FileVersionInfo.cs" />
     <Compile Include="Helpers.cs" />
     <Compile Include="Decomposer.cs" />
+    <Compile Include="UpdateMirror.cs" />
     <Compile Include="Updater.cs" />
     <Compile Include="VersionFile.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

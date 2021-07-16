@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -9,26 +10,6 @@ using System.Threading.Tasks;
 
 namespace WAUpdater
 {
-    public class UpdateMirror
-    {
-        public UpdateMirror(string name, string uriBase, string location, long fileSizeLimit = long.MaxValue)
-        {
-            Name = name;
-            UriBase = uriBase;
-            Location = location;
-            FileSizeLimit = fileSizeLimit;
-        }
-
-        public string Name { get; }
-        public string UriBase { get; }
-        public string Location { get; }
-        public long FileSizeLimit { get; }
-
-        public override string ToString()
-        {
-            return $"{Name}-{Location}, {UriBase}";
-        }
-    }
     public class Updater
     {
         const string IGNORE_FILE = "version_ignore";
@@ -39,7 +20,7 @@ namespace WAUpdater
         public Updater() : this(new UpdateMirror("local", Directory.GetCurrentDirectory(), "local"))
         {
         }
-        public Updater(UpdateMirror mirror, int maxDownloadCount = 8)
+        public Updater(UpdateMirror mirror, int maxDownloadCount = 4)
         {
             Downloader = new Downloader();
             VersionFile = new VersionFile(VERSION_FILE);
@@ -57,7 +38,19 @@ namespace WAUpdater
         public UpdateMirror Mirror { get; }
         public List<Regex> Ignore { get; internal set; }
         public Decomposer Decomposer { get; internal set; }
-        public int MaxDownloadCount { get; internal set; }
+        public int MaxDownloadCount
+        {
+            get => maxDownloadCount;
+            set
+            {
+                if (ServicePointManager.DefaultConnectionLimit < value)
+                {
+                    ServicePointManager.DefaultConnectionLimit = value;
+                }
+                maxDownloadCount = value;
+            }
+        }
+        private int maxDownloadCount;
 
         void ReadIgnore()
         {
@@ -121,14 +114,18 @@ namespace WAUpdater
                 Semaphore semaphore = new Semaphore(MaxDownloadCount, MaxDownloadCount);
                 DownloadStateChangedEventHandler handler = (object sender, DownloadStateChangedEventArgs args) =>
                 {
-                    switch (args.State)
+                    var task = sender as DownloadTask;
+                    if (task.Status > TaskStatus.Running)
                     {
-                        case DownloadState.Stop:
-                        case DownloadState.Fail:
-                        case DownloadState.Canceled:
-                        case DownloadState.Success:
-                            semaphore.Release();
-                            break;
+                        switch (args.State)
+                        {
+                            case DownloadState.Stop:
+                            case DownloadState.Fail:
+                            case DownloadState.Canceled:
+                            case DownloadState.Success:
+                                semaphore.Release();
+                                break;
+                        }
                     }
                 };
                 Func<FileVersionInfo, DownloadTask> CreateDownloadTask = (FileVersionInfo versionInfo) =>
@@ -145,14 +142,15 @@ namespace WAUpdater
                             {
                                 DownloadTask volumnTask = Downloader.Create(Map(volumn.Path), GetUpdatePath(volumn.Path));
                                 volumnTask.TokenSource = task.TokenSource;
-                                task.StateChanged += handler;
+                                volumnTask.StateChanged += handler;
                                 volumnTask.Length = volumn.Size;
                                 volumnTasks.Add(volumnTask);
                             }
 
                             CancellationTokenSource tokenSource = task.TokenSource;
 
-                            Task downloadTask = new Task(() => {
+                            Task downloadTask = new Task(() =>
+                            {
                                 task.ChangeState(DownloadState.Downloading);
                                 semaphore.Release();
                                 foreach (DownloadTask volumnTask in volumnTasks)
@@ -186,15 +184,16 @@ namespace WAUpdater
                                 }
 
                                 task.ChangeState(tokenSource.IsCancellationRequested ? DownloadState.Canceled : DownloadState.Success);
-                                if(task.State == DownloadState.Success)
+                                if (task.State == DownloadState.Success)
                                 {
                                     string fileName = downloadTasks[0].FileName;
                                     fileName = Path.Combine(Path.GetDirectoryName(fileName), Path.GetFileNameWithoutExtension(fileName));
                                     Decomposer.Compose(fileName, task.FileName);
                                 }
                             }
-                            catch (Exception)
+                            catch (Exception ex)
                             {
+                                task.CurrentException = ex;
                                 task.ChangeState(DownloadState.Fail);
                                 throw;
                             }
@@ -210,33 +209,42 @@ namespace WAUpdater
                     return task;
                 };
 
-                List<DownloadTask> tasks = new List<DownloadTask>();
                 List<string> filesToDownload = diff.FilesToDownload;
-                foreach (string file in filesToDownload)
+                List<DownloadTask> tasks = new List<DownloadTask>();
+                do
                 {
-                    if (IsDownloaded(file) == false)
+                    tasks.Clear();
+                    foreach (string file in filesToDownload)
                     {
-                        tasks.Add(CreateDownloadTask(VersionFileRemote.FileVersionInfos[file]));
+                        if (IsDownloaded(file) == false)
+                        {
+                            tasks.Add(CreateDownloadTask(VersionFileRemote.FileVersionInfos[file]));
+                        }
                     }
-                }
 
-                foreach (DownloadTask task in tasks)
-                {
-                    // download task canceled, stop starting other new download task.
-                    if (cancellationTokenSource.IsCancellationRequested)
+                    foreach (DownloadTask task in tasks)
                     {
-                        task.ChangeState(DownloadState.Canceled);
-                        break;
+                        // download task canceled, stop starting other new download task.
+                        if (cancellationTokenSource.IsCancellationRequested)
+                        {
+                            task.ChangeState(DownloadState.Canceled);
+                            break;
+                        }
+                        else
+                        {
+                            semaphore.WaitOne();
+                            Downloader.Start(task);
+                        }
                     }
-                    else
-                    {
-                        semaphore.WaitOne();
-                        Downloader.Start(task);
-                    }
-                }
 
-                Task wait = Task.WhenAll(tasks);
-                wait.Wait();
+                    try
+                    {
+                        Task.WaitAll(tasks.ToArray());
+                    }
+                    catch (AggregateException)
+                    {
+                    }
+                } while (tasks.Count > 0 && cancellationTokenSource.IsCancellationRequested == false);
             });
         }
 
@@ -280,7 +288,7 @@ namespace WAUpdater
             {
                 File.Delete(file);
                 string dir = Path.GetDirectoryName(file);
-                if(string.IsNullOrEmpty(dir) == false && Directory.GetFiles(dir).Length == 0)
+                if (string.IsNullOrEmpty(dir) == false && Directory.GetFiles(dir).Length == 0)
                 {
                     Directory.Delete(dir);
                 }
