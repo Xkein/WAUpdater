@@ -3,12 +3,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using WAUpdater;
 
-namespace Test
+namespace WAUpdate.CUI
 {
     class Program
     {
@@ -130,6 +131,7 @@ namespace Test
                 foreach (Process process in Process.GetProcessesByName(procName))
                 {
                     Console.WriteLine("waiting {0}...", procName);
+                    Console.WriteLine("if {0} is not close, you can close it manually.", procName);
                     process.WaitForExit();
                 }
             }
@@ -137,17 +139,27 @@ namespace Test
             // replace it before it loaded
             string dll_old = "WAUpdater.dll";
             string dll_new = Path.Combine("Update", dll_old);
-            if (File.Exists(dll_new))
+
+            while (File.Exists(dll_new))
             {
-                Console.WriteLine("replace old {0}...", dll_old);
-                File.Copy(dll_new, dll_old, true);
-                File.Delete(dll_new);
+                try
+                {
+                    Console.WriteLine("replace old {0}...", dll_old);
+                    File.Copy(dll_new, dll_old, true);
+                    File.Delete(dll_new);
+                }
+                catch (Exception)
+                {
+                    Console.WriteLine("fail. retrying.");
+                }
             }
 
             Console.WriteLine("updating...");
             UpdateFiles();
         }
 
+        // avoid loading WAUpdater.dll in inlined funciton.
+        [MethodImpl(MethodImplOptions.NoInlining)]
         private static void UpdateFiles()
         {
             Updater updater = new Updater();
