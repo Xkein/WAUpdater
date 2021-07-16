@@ -115,7 +115,7 @@ namespace WAUpdater
                 DownloadStateChangedEventHandler handler = (object sender, DownloadStateChangedEventArgs args) =>
                 {
                     var task = sender as DownloadTask;
-                    if (task.Status > TaskStatus.Running)
+                    if (args.State != DownloadState.Canceled || task.Status > TaskStatus.Running)
                     {
                         switch (args.State)
                         {

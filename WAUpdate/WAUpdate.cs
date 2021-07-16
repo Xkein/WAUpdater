@@ -111,7 +111,7 @@ namespace WAUpdate
 
                 _updater.Downloader.RWLock.EnterReadLock();
                 int count = _updater.Downloader.Tasks.Count(t => t.State == DownloadState.Success);
-                count += _diff.FilesToDownload.Count(file => File.Exists(Path.Combine("Update", file)) && _updater.Downloader.Tasks.Select(t => t.FileName).Contains(file) == false);
+                count += _diff.FilesToDownload.Count(file => File.Exists(Path.Combine("Update", file)) && _updater.Downloader.Tasks.Count(t => t.FileName.Contains(file)) == 0);
                 _updater.Downloader.RWLock.ExitReadLock();
                 return count;
             }
