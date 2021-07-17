@@ -80,7 +80,7 @@ namespace WAUpdate
                 }
 
                 _updater.Downloader.RWLock.EnterReadLock();
-                long totalDownloadedSize = _updater.Downloader.Tasks.Sum(t => t.Current);
+                long totalDownloadedSize = _updater.Downloader.Tasks.Reverse().Distinct().Sum(t => t.Current);
                 _updater.Downloader.RWLock.ExitReadLock();
                 return totalDownloadedSize;
             }
