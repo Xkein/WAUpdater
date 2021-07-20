@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
@@ -36,17 +37,25 @@ namespace WAUpdater
         }
         public void Read()
         {
+            RWLock.EnterWriteLock();
+
             FileVersionInfos.Clear();
             if (File.Exists(fileName))
             {
                 XElement file = XElement.Load(fileName);
                 VersionNumber = (string)file.Attribute("Number");
-                foreach (XElement element in file.Elements())
+                foreach (XElement element in file.Elements("AllowUpdateVersion"))
+                {
+                    AllowUpdateVersions.Add((string)element.Attribute("Number"));
+                }
+                foreach (XElement element in file.Elements("File"))
                 {
                     var info = new FileVersionInfo(element);
                     FileVersionInfos.Add(info.Path, info);
                 }
             }
+
+            RWLock.ExitWriteLock();
         }
         bool IsInHiddenDirectory(FileInfo info)
         {
@@ -63,9 +72,12 @@ namespace WAUpdater
 
             return false;
         }
+
         public void Calculate(List<Regex> ignore, Decomposer decomposer = null)
         {
+            RWLock.EnterWriteLock();
             FileVersionInfos.Clear();
+
             var dir = new DirectoryInfo(BaseDirectory);
 
             List<FileInfo> list = dir.GetFiles("*", SearchOption.AllDirectories).ToList();
@@ -91,38 +103,46 @@ namespace WAUpdater
             }
 
             List<string> toCalc = relPaths.Except(toIgnore).ToList();
-            foreach (string relPath in toCalc)
-            {
-                var versionInfo = new FileVersionInfo(relPath);
-                if (decomposer != null && decomposer.NeedDecompose(relPath))
-                {
-                    versionInfo.IsDecomposed = true;
-                    string[] volumns = decomposer.Decompose(relPath, "Volumns");
-                    versionInfo.Volumns = (from volumn in volumns
-                                           select new FileVersionInfo(volumn, isVolumn: true)
-                                           ).ToList();
-                }
 
-                FileVersionInfos.Add(relPath, versionInfo);
+            List<FileVersionInfo> fileVersionInfos = (from relPath in toCalc.AsParallel()
+                                                      select new FileVersionInfo(relPath, decomposer))
+                                                      .ToList();
+
+            foreach (FileVersionInfo info in fileVersionInfos)
+            {
+                FileVersionInfos.Add(info.Path, info);
             }
+            RWLock.ExitWriteLock();
         }
 
         public void Write()
         {
             var file = new XElement("Version", new XAttribute("Number", VersionNumber));
 
+            RWLock.EnterReadLock();
+            if (AllowUpdateVersions.Contains(VersionNumber) == false)
+            {
+                AllowUpdateVersions.Add(VersionNumber);
+            }
+            foreach (string version in AllowUpdateVersions)
+            {
+                file.Add(new XElement("AllowUpdateVersion", new XAttribute("Number", version)));
+            }
             foreach (var pair in FileVersionInfos)
             {
                 string path = pair.Key;
                 FileVersionInfo info = pair.Value;
                 file.Add(info.GetXElement());
             }
+            RWLock.ExitReadLock();
+
             file.Save(fileName);
         }
 
         public DiffResult GetDiff(VersionFile versionFile)
         {
             DiffResult tmp;
+            RWLock.EnterReadLock();
             List<string> from = this.FileVersionInfos.Keys.ToList();
             List<string> to = versionFile.FileVersionInfos.Keys.ToList();
 
@@ -132,6 +152,7 @@ namespace WAUpdater
                             where _old.Value.Checksum != _new.Value.Checksum
                             select _old.Key
                             ).ToList();
+            RWLock.ExitReadLock();
             tmp.Addeds = to.Except(from).ToList();
             tmp.Removeds = from.Except(to).ToList();
 
@@ -141,6 +162,7 @@ namespace WAUpdater
         public string[] GetUploadableFiles()
         {
             List<string> files = new List<string>();
+            RWLock.EnterReadLock();
             foreach (FileVersionInfo info in FileVersionInfos.Values)
             {
                 if (info.IsDecomposed)
@@ -152,12 +174,15 @@ namespace WAUpdater
                     files.Add(info.Path);
                 }
             }
+            RWLock.ExitReadLock();
             return files.ToArray();
         }
 
         string fileName;
         string BaseDirectory => Path.GetDirectoryName(fileName);
         public Dictionary<string, FileVersionInfo> FileVersionInfos { get; private set; } = new Dictionary<string, FileVersionInfo>();
+        public ReaderWriterLockSlim RWLock { get; } = new ReaderWriterLockSlim();
         public string VersionNumber { get; set; }
+        public List<string> AllowUpdateVersions { get; set; } = new List<string>();
     }
 }

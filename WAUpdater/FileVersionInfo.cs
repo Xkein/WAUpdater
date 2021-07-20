@@ -21,6 +21,24 @@ namespace WAUpdater
             Volumns = volumns;
         }
 
+        public FileVersionInfo(string path, Decomposer decomposer)
+        {
+            Path = path;
+            Name = System.IO.Path.GetFileName(Path);
+            Checksum = WAUpdater.Checksum.CalcFileChecksum(path);
+            Size = new FileInfo(path).Length;
+            IsVolumn = false;
+
+            if (decomposer != null && decomposer.NeedDecompose(path))
+            {
+                IsDecomposed = true;
+                string[] volumns = decomposer.Decompose(path, "Volumns");
+                Volumns = (from volumn in volumns
+                                       select new FileVersionInfo(volumn, isVolumn: true)
+                                       ).ToList();
+            }
+        }
+
         public FileVersionInfo(XElement element)
         {
             Path = (string)element.Attribute("Path");

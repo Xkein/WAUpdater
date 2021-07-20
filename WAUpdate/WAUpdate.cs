@@ -52,9 +52,11 @@ namespace WAUpdate
                 }
 
                 List<string> filesToDownload = _diff.FilesToDownload;
+                _updater.VersionFileRemote.RWLock.EnterReadLock();
                 var infos = (from info in _updater.VersionFileRemote.FileVersionInfos
                              where filesToDownload.Contains(info.Value.Path)
                              select info.Value).ToList();
+                _updater.VersionFileRemote.RWLock.ExitReadLock();
                 return infos.Sum(info => info.Size);
             }
         }
@@ -70,6 +72,30 @@ namespace WAUpdate
                 return _diff.FilesToDownload.Count;
             }
         }
+
+        private class DownloadTaskComparer : IEqualityComparer<DownloadTask>
+        {
+            public bool Equals(DownloadTask left, DownloadTask right)
+            {
+                //Check whether the compared objects reference the same data.
+                if (Object.ReferenceEquals(left, right)) return true;
+
+                //Check whether any of the compared objects is null.
+                if (Object.ReferenceEquals(left, null) || Object.ReferenceEquals(right, null))
+                    return false;
+
+                return left.Uri == right.Uri;
+            }
+
+            // If Equals() returns true for a pair of objects
+            // then GetHashCode() must return the same value for these objects.
+            public int GetHashCode(DownloadTask task)
+            {
+                //Check whether the object is null
+                if (Object.ReferenceEquals(task, null)) return 0;
+                return task.Uri == null ? 0 : task.Uri.GetHashCode();
+            }
+        }
         public static long TotalDownloadedSize
         {
             get
@@ -80,7 +106,8 @@ namespace WAUpdate
                 }
 
                 _updater.Downloader.RWLock.EnterReadLock();
-                long totalDownloadedSize = _updater.Downloader.Tasks.Reverse().Distinct().Sum(t => t.Current);
+                long totalDownloadedSize = _updater.Downloader.Tasks.Reverse().Distinct(new DownloadTaskComparer()).Sum(t => t.Current);
+                totalDownloadedSize += _diff.FilesToDownload.Sum(file => TaskFinished(file) ? _updater.VersionFileRemote.FileVersionInfos[file].Size : 0);
                 _updater.Downloader.RWLock.ExitReadLock();
                 return totalDownloadedSize;
             }
@@ -111,10 +138,15 @@ namespace WAUpdate
 
                 _updater.Downloader.RWLock.EnterReadLock();
                 int count = _updater.Downloader.Tasks.Count(t => t.State == DownloadState.Success);
-                count += _diff.FilesToDownload.Count(file => File.Exists(Path.Combine("Update", file)) && _updater.Downloader.Tasks.Count(t => t.FileName.Contains(file)) == 0);
+                count += _diff.FilesToDownload.Count(file => TaskFinished(file));
                 _updater.Downloader.RWLock.ExitReadLock();
                 return count;
             }
+        }
+
+        private static bool TaskFinished(string file)
+        {
+            return File.Exists(Path.Combine("Update", file)) && _updater.Downloader.Tasks.Count(t => t.FileName.Contains(file)) == 0;
         }
 
         public static int DownloadThreadCount
@@ -160,13 +192,25 @@ namespace WAUpdate
             return Mirrors[0];
         }
 
-        public static void CalculateVersion()
+        public static void ReadVersion()
         {
             Updater updater = new Updater(SelectMirror());
             updater.VersionFile.Read();
             GameVersion = updater.VersionFile.VersionNumber;
-            updater.CalculateVersion();
             _updater = updater;
+        }
+
+        public static void CalculateVersion()
+        {
+            _updater.CalculateVersion();
+        }
+
+        public static Task CalculateVersionAsync()
+        {
+            return Task.Run(() =>
+            {
+                CalculateVersion();
+            });
         }
 
         public static void CheckVersion()
@@ -180,15 +224,23 @@ namespace WAUpdate
             ChangeVersionState(VersionState.VersionCheckInProgress);
             if (_updater.CheckUpdate(out _diff))
             {
-                if(_diff.FilesToDownload.Count <= 0)
+                ServerGameVersion = _updater.VersionFileRemote.VersionNumber;
+
+                if (_updater.VersionFileRemote.AllowUpdateVersions.Contains(GameVersion))
                 {
-                    ChangeVersionState(VersionState.UpToDate);
+                    if (_diff.FilesToDownload.Count <= 0)
+                    {
+                        ChangeVersionState(VersionState.UpToDate);
+                    }
+                    else
+                    {
+                        ChangeVersionState(VersionState.Outdated);
+                    }
                 }
                 else
                 {
-                    ChangeVersionState(VersionState.Outdated);
+                    ChangeVersionState(VersionState.Mismatched);
                 }
-                ServerGameVersion = _updater.VersionFileRemote.VersionNumber;
             }
             else
             {
